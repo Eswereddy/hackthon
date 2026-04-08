@@ -1,0 +1,22 @@
+name: real-world-ops-benchmark
+version: 0.1.0
+description: Customer support operations benchmark with realistic tasks (email triage, ticket routing, content moderation).
+author: hackathon
+license: MIT
+tags:
+  - openenv
+  - real-world
+entrypoint: src.openenv_hackathon.environment:RealWorldOpsEnv
+observation_model: src.openenv_hackathon.models:Observation
+action_model: src.openenv_hackathon.models:Action
+reward_model: src.openenv_hackathon.models:Reward
+tasks:
+  - id: email_triage
+    title: Support Inbox Triage
+    difficulty: easy
+  - id: ticket_routing
+    title: Queue And Priority Routing
+    difficulty: medium
+  - id: content_moderation
+    title: Community Moderation Decisions
+    difficulty: hard
