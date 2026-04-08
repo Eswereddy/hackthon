@@ -1,6 +1,6 @@
 ---
 title: Real-World OpenEnv Benchmark
-emoji: robot
+emoji: "🤖"
 colorFrom: blue
 colorTo: green
 sdk: docker
