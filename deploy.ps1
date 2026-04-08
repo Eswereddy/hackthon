@@ -1,6 +1,7 @@
 param(
     [switch]$SkipDocker,
-    [switch]$SkipValidator
+    [switch]$SkipValidator,
+    [switch]$SkipHF
 )
 
 $ErrorActionPreference = "Stop"
@@ -25,14 +26,17 @@ if (-not $SkipValidator) {
     $openenvCmd = Get-Command openenv -ErrorAction SilentlyContinue
     if ($null -eq $openenvCmd) {
         Write-Warning "openenv CLI not found. Install official hackathon validator, then run: openenv validate"
-    } else {
+    }
+    else {
         try {
             openenv validate
-        } catch {
+        }
+        catch {
             Write-Warning "openenv validate failed in this environment. Run it on the submission machine after installing the official validator."
         }
     }
-} else {
+}
+else {
     Write-Host "[3/4] Skipped OpenEnv validation."
 }
 
@@ -41,7 +45,8 @@ if (-not $SkipDocker) {
     $dockerCmd = Get-Command docker -ErrorAction SilentlyContinue
     if ($null -eq $dockerCmd) {
         Write-Warning "Docker is not installed. Install Docker Desktop and run docker build/docker run."
-    } else {
+    }
+    else {
         try {
             if ($env:DOCKER_API_VERSION) {
                 Remove-Item Env:DOCKER_API_VERSION -ErrorAction SilentlyContinue
@@ -56,10 +61,33 @@ if (-not $SkipDocker) {
             if ($LASTEXITCODE -ne 0) {
                 throw "Docker run failed."
             }
-        } catch {
+        }
+        catch {
             Write-Warning "Docker daemon is not ready or build/run failed. Start Docker Desktop and rerun deploy.ps1."
         }
     }
-} else {
+}
+else {
     Write-Host "[4/4] Skipped Docker build/run."
+}
+
+if (-not $SkipHF) {
+    Write-Host "[5/5] Deploying Hugging Face Space..."
+    if (-not $env:HF_TOKEN) {
+        Write-Warning "HF_TOKEN is not set. Set HF_TOKEN then rerun deploy.ps1 (or run deploy_hf_space.py directly)."
+    }
+    else {
+        try {
+            & $pythonExe deploy_hf_space.py
+            if ($LASTEXITCODE -ne 0) {
+                throw "Hugging Face deployment failed."
+            }
+        }
+        catch {
+            Write-Warning "Hugging Face deployment failed. Verify HF_TOKEN permissions and network access, then rerun."
+        }
+    }
+}
+else {
+    Write-Host "[5/5] Skipped Hugging Face deployment."
 }
