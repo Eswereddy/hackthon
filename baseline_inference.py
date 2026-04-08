@@ -28,8 +28,16 @@ def build_prompt(task_observation: Dict) -> str:
 
 
 def parse_action(raw: str) -> Action:
+    candidate = raw.strip()
+    if "```" in candidate:
+        parts = [p.strip() for p in candidate.split("```") if p.strip()]
+        # Prefer the longest non-empty chunk, which is typically the JSON body.
+        candidate = max(parts, key=len)
+        if candidate.lower().startswith("json"):
+            candidate = candidate[4:].strip()
+
     try:
-        data = json.loads(raw)
+        data = json.loads(candidate)
         return Action(**data)
     except Exception:
         return Action(action_type=ActionType.NOOP, payload={})

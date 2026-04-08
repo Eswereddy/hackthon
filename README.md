@@ -83,6 +83,11 @@ Reward is shaped during the trajectory, not only at terminal states:
 
 This encourages steady progress and discourages random or unsafe policies.
 
+Safety controls included:
+- Unsafe action counter (invalid, destructive, repeated-loop behavior)
+- Early safety cutoff when unsafe behavior persists
+- Additional step telemetry: score delta and cumulative safety violations in `info`
+
 ## Setup
 
 ```bash
@@ -103,6 +108,9 @@ API endpoints for interactive environment control:
 - `POST /reset?task_id=email_triage`
 - `POST /step` (JSON body follows `Action` model)
 - `GET /state`
+- `GET /metrics`
+- `GET /action-space`
+- `POST /simulate` (batch actions with optional reset)
 
 ## One-Command Preflight
 
