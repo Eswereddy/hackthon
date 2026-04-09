@@ -98,25 +98,23 @@ def run_task(client: Optional[OpenAI], model: str, task_id: str, max_turns: int,
         else:
             if client is None:
                 raise RuntimeError("OpenAI client not initialized for policy=openai")
-            completion = client.responses.create(
-                model=model,
-                temperature=0,
-                input=[
-                    {
-                        "role": "user",
-                        "content": [{"type": "text", "text": build_prompt(obs.model_dump())}],
-                    }
-                ],
-            )
+            try:
+                completion = client.chat.completions.create(
+                    model=model,
+                    temperature=0,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": build_prompt(obs.model_dump()),
+                        }
+                    ],
+                )
 
-            text_parts = []
-            for output_item in completion.output:
-                if output_item.type == "message":
-                    for c in output_item.content:
-                        if c.type == "output_text":
-                            text_parts.append(c.text)
-            raw = "".join(text_parts).strip()
-            action = parse_action(raw)
+                raw = completion.choices[0].message.content.strip() if completion.choices[0].message.content else ""
+                action = parse_action(raw)
+            except Exception as e:
+                print(f"Error calling OpenAI API: {e}")
+                action = Action(action_type=ActionType.NOOP, payload={})
 
         obs, _, done, info = env.step(action)
         if done:
@@ -142,18 +140,30 @@ def main() -> None:
         token = os.environ.get("HF_TOKEN")
         if not token:
             raise EnvironmentError("HF_TOKEN is required. Set it to your API key before running baseline inference.")
-        client = OpenAI(api_key=token)
+        try:
+            client = OpenAI(api_key=token)
+        except Exception as e:
+            print(f"Error initializing OpenAI client: {e}")
+            raise
 
     task_ids = ["email_triage", "ticket_routing", "content_moderation"]
     results: Dict[str, float] = {}
 
     for task_id in task_ids:
-        score = run_task(client=client, model=args.model, task_id=task_id, max_turns=args.max_turns, policy=args.policy)
-        results[task_id] = round(score, 4)
+        try:
+            score = run_task(client=client, model=args.model, task_id=task_id, max_turns=args.max_turns, policy=args.policy)
+            results[task_id] = round(score, 4)
+        except Exception as e:
+            print(f"Error running task {task_id}: {e}")
+            results[task_id] = 0.0
 
     aggregate = round(mean(results.values()), 4)
     print(json.dumps({"model": args.model, "policy": args.policy, "scores": results, "average": aggregate}, indent=2))
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        print(f"Fatal error: {e}")
+        raise
