@@ -14,6 +14,18 @@ from src.openenv_hackathon.environment import RealWorldOpsEnv
 from src.openenv_hackathon.models import Action, ActionType
 
 
+# Epsilon to keep scores strictly within (0, 1) range as required by validator
+# Use 0.0001 so it survives rounding to 4 decimal places
+SCORE_EPSILON = 0.0001
+
+
+def clamp_score(score: float) -> float:
+    """Ensure score is strictly within (0, 1), not including boundaries."""
+    score = float(score)
+    # Clamp to [epsilon, 1-epsilon] to ensure strictly within (0, 1)
+    return max(SCORE_EPSILON, min(1.0 - SCORE_EPSILON, score))
+
+
 def build_prompt(task_observation: Dict) -> str:
     return (
         "You are controlling a benchmark environment.\n"
@@ -148,15 +160,15 @@ def run_task(client: Optional[OpenAI], model: str, task_id: str, max_turns: int,
         prev_progress = current_progress
         
         if done:
-            final_score = float(info["grader_score"])
+            final_score = clamp_score(float(info["grader_score"]))
             # Print structured END block
-            print(f"[END] task={task_id} score={final_score:.4f} steps={step_count}", flush=True)
+            print(f"[END] task={task_id} score={final_score:.6f} steps={step_count}", flush=True)
             return final_score, step_count
 
     # Task not completed within max_turns
-    final_score = float(env.state().observation.progress if env.state().observation else 0.0)
+    final_score = clamp_score(float(env.state().observation.progress if env.state().observation else 0.0))
     # Print structured END block
-    print(f"[END] task={task_id} score={final_score:.4f} steps={step_count}", flush=True)
+    print(f"[END] task={task_id} score={final_score:.6f} steps={step_count}", flush=True)
     return final_score, step_count
 
 
@@ -240,10 +252,12 @@ def main() -> None:
             print(f"✓ Completed: Score={results[task_id]}, Steps={steps}\n", flush=True)
         except Exception as e:
             print(f"❌ Error in {task_id}: {type(e).__name__}: {e}", flush=True)
-            results[task_id] = 0.0
+            # Use SCORE_EPSILON for errors (lowest valid score, strictly > 0)
+            results[task_id] = SCORE_EPSILON
             step_counts[task_id] = 0
 
-    aggregate = round(mean(results.values()), 4)
+    aggregate = clamp_score(mean(results.values()))
+    aggregate = round(aggregate, 4)
     print("\n" + "="*60, flush=True)
     print(f"📊 Final Results (Policy: {effective_policy})", flush=True)
     print("="*60, flush=True)
