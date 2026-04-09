@@ -99,6 +99,7 @@ def run_task(client: Optional[OpenAI], model: str, task_id: str, max_turns: int,
             if client is None:
                 raise RuntimeError("OpenAI client not initialized for policy=openai")
             try:
+                # Call OpenAI Chat Completions API (v2.x compatible)
                 completion = client.chat.completions.create(
                     model=model,
                     temperature=0,
@@ -110,10 +111,21 @@ def run_task(client: Optional[OpenAI], model: str, task_id: str, max_turns: int,
                     ],
                 )
 
-                raw = completion.choices[0].message.content.strip() if completion.choices[0].message.content else ""
+                # Parse response safely
+                if not completion or not completion.choices or len(completion.choices) == 0:
+                    raise ValueError("Empty response from OpenAI API")
+                
+                message_content = completion.choices[0].message.content
+                if message_content is None:
+                    raise ValueError("Message content is None from OpenAI API")
+                
+                raw = message_content.strip()
                 action = parse_action(raw)
+            except ValueError as e:
+                print(f"⚠️ API Response Error: {e}")
+                action = Action(action_type=ActionType.NOOP, payload={})
             except Exception as e:
-                print(f"Error calling OpenAI API: {e}")
+                print(f"⚠️ OpenAI API Error: {type(e).__name__}: {e}")
                 action = Action(action_type=ActionType.NOOP, payload={})
 
         obs, _, done, info = env.step(action)
