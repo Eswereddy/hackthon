@@ -167,33 +167,42 @@ def main() -> None:
     parser.add_argument(
         "--policy",
         choices=["openai", "heuristic"],
-        default="heuristic",
-        help="Inference policy: openai uses API_KEY/API_BASE_URL (validator proxy) or HF_TOKEN, heuristic is fully deterministic local baseline.",
+        default=None,  # Will auto-detect based on available credentials
+        help="Inference policy: openai uses API_KEY/API_BASE_URL (validator proxy) or HF_TOKEN, heuristic is fully deterministic local baseline. Auto-detected if not specified.",
     )
     args = parser.parse_args()
 
     client: Optional[OpenAI] = None
-    effective_policy = args.policy
     
-    if args.policy == "openai":
-        # Try to use validator-provided API_BASE_URL and API_KEY first
-        api_base = os.environ.get("API_BASE_URL")
-        api_key = os.environ.get("API_KEY")
-        
-        # Fall back to HF_TOKEN if validator variables not provided
-        if not api_key:
-            api_key = os.environ.get("HF_TOKEN")
-        
-        if not api_key:
-            print("⚠️ API_KEY/HF_TOKEN not found. Falling back to heuristic policy (deterministic baseline).", flush=True)
-            effective_policy = "heuristic"
+    # Auto-detect best policy based on available credentials
+    # Priority: 1) API_BASE_URL (validator proxy), 2) API_KEY (validator), 3) HF_TOKEN, 4) fallback to heuristic
+    api_base = os.environ.get("API_BASE_URL")
+    api_key = os.environ.get("API_KEY")
+    hf_token = os.environ.get("HF_TOKEN")
+    
+    # Determine effective policy
+    if args.policy:
+        # Use explicitly specified policy
+        effective_policy = args.policy
+    else:
+        # Auto-detect: prefer openai if any credentials available, otherwise heuristic
+        if api_base or api_key or hf_token:
+            effective_policy = "openai"
         else:
+            effective_policy = "heuristic"
+    
+    # Initialize OpenAI client if using openai policy
+    if effective_policy == "openai":
+        # Prefer validator-provided credentials (API_BASE_URL + API_KEY)
+        # Fall back to HF_TOKEN if validator credentials not available
+        if api_key:
             try:
-                # Initialize with API_BASE_URL if provided, otherwise use default OpenAI endpoint
                 init_kwargs = {"api_key": api_key, "timeout": 30.0}
                 if api_base:
                     init_kwargs["base_url"] = api_base
-                    print(f"✓ Using API_BASE_URL: {api_base}", flush=True)
+                    print(f"✓ Using validator API_BASE_URL: {api_base}", flush=True)
+                else:
+                    print("✓ Using validator API_KEY", flush=True)
                 
                 client = OpenAI(**init_kwargs)
                 print("✓ OpenAI client initialized successfully", flush=True)
@@ -201,12 +210,25 @@ def main() -> None:
                 print(f"⚠️ Failed to initialize OpenAI client: {type(e).__name__}: {e}", flush=True)
                 print("Falling back to heuristic policy.", flush=True)
                 effective_policy = "heuristic"
+        elif hf_token:
+            try:
+                client = OpenAI(api_key=hf_token, timeout=30.0)
+                print("✓ OpenAI client initialized successfully with HF_TOKEN", flush=True)
+            except Exception as e:
+                print(f"⚠️ Failed to initialize OpenAI client: {type(e).__name__}: {e}", flush=True)
+                print("Falling back to heuristic policy.", flush=True)
+                effective_policy = "heuristic"
+        else:
+            print("⚠️ No API credentials found (API_KEY/HF_TOKEN). Falling back to heuristic policy (deterministic baseline).", flush=True)
+            effective_policy = "heuristic"
 
     task_ids = ["email_triage", "ticket_routing", "content_moderation"]
     results: Dict[str, float] = {}
     step_counts: Dict[str, int] = {}
 
     print(f"\n📋 Running evaluation with policy={effective_policy}, model={args.model}, max_turns={args.max_turns}", flush=True)
+    if effective_policy == "openai" and api_base:
+        print(f"📌 Using validator's LiteLLM proxy: {api_base}", flush=True)
     print(f"📌 Tasks: {', '.join(task_ids)}\n", flush=True)
     
     for idx, task_id in enumerate(task_ids, 1):
