@@ -90,11 +90,18 @@ def heuristic_action(task_id: str, observation: Dict) -> Action:
     return Action(action_type=ActionType.NOOP, payload={})
 
 
-def run_task(client: Optional[OpenAI], model: str, task_id: str, max_turns: int, policy: str) -> float:
+def run_task(client: Optional[OpenAI], model: str, task_id: str, max_turns: int, policy: str) -> tuple[float, int]:
+    """Run a task and return (final_score, steps_taken)."""
     env = RealWorldOpsEnv(task_id=task_id)
     obs = env.reset()
+    
+    # Print structured START block
+    print(f"[START] task={task_id}", flush=True)
+    
+    step_count = 0
+    prev_progress = 0.0
 
-    for _ in range(max_turns):
+    for step_num in range(1, max_turns + 1):
         if policy == "heuristic":
             action = heuristic_action(task_id=task_id, observation=obs.model_dump())
         else:
@@ -125,17 +132,32 @@ def run_task(client: Optional[OpenAI], model: str, task_id: str, max_turns: int,
                 raw = message_content.strip()
                 action = parse_action(raw)
             except ValueError as e:
-                print(f"⚠️ API Response Error: {e}")
+                print(f"⚠️ API Response Error: {e}", flush=True)
                 action = Action(action_type=ActionType.NOOP, payload={})
             except Exception as e:
-                print(f"⚠️ OpenAI API Error ({type(e).__name__}): {e}. Using NOOP action.")
+                print(f"⚠️ OpenAI API Error ({type(e).__name__}): {e}. Using NOOP action.", flush=True)
                 action = Action(action_type=ActionType.NOOP, payload={})
 
-        obs, _, done, info = env.step(action)
+        obs, reward, done, info = env.step(action)
+        step_count = step_num
+        current_progress = float(obs.progress if hasattr(obs, 'progress') else info.get('grader_score', 0.0))
+        
+        # Print structured STEP block with reward delta
+        reward_delta = current_progress - prev_progress
+        print(f"[STEP] step={step_num} reward={reward_delta:.4f}", flush=True)
+        prev_progress = current_progress
+        
         if done:
-            return float(info["grader_score"])
+            final_score = float(info["grader_score"])
+            # Print structured END block
+            print(f"[END] task={task_id} score={final_score:.4f} steps={step_count}", flush=True)
+            return final_score, step_count
 
-    return float(env.state().observation.progress if env.state().observation else 0.0)
+    # Task not completed within max_turns
+    final_score = float(env.state().observation.progress if env.state().observation else 0.0)
+    # Print structured END block
+    print(f"[END] task={task_id} score={final_score:.4f} steps={step_count}", flush=True)
+    return final_score, step_count
 
 
 def main() -> None:
@@ -156,38 +178,42 @@ def main() -> None:
     if args.policy == "openai":
         token = os.environ.get("HF_TOKEN")
         if not token:
-            print("⚠️ HF_TOKEN not found. Falling back to heuristic policy (deterministic baseline).")
+            print("⚠️ HF_TOKEN not found. Falling back to heuristic policy (deterministic baseline).", flush=True)
             effective_policy = "heuristic"
         else:
             try:
                 client = OpenAI(api_key=token, timeout=30.0)
-                print("✓ OpenAI client initialized successfully")
+                print("✓ OpenAI client initialized successfully", flush=True)
             except Exception as e:
-                print(f"⚠️ Failed to initialize OpenAI client: {type(e).__name__}: {e}")
-                print("Falling back to heuristic policy.")
+                print(f"⚠️ Failed to initialize OpenAI client: {type(e).__name__}: {e}", flush=True)
+                print("Falling back to heuristic policy.", flush=True)
                 effective_policy = "heuristic"
 
     task_ids = ["email_triage", "ticket_routing", "content_moderation"]
     results: Dict[str, float] = {}
+    step_counts: Dict[str, int] = {}
 
-    print(f"\n📋 Running evaluation with policy={effective_policy}, model={args.model}, max_turns={args.max_turns}")
-    print(f"📌 Tasks: {', '.join(task_ids)}\n")
+    print(f"\n📋 Running evaluation with policy={effective_policy}, model={args.model}, max_turns={args.max_turns}", flush=True)
+    print(f"📌 Tasks: {', '.join(task_ids)}\n", flush=True)
     
     for idx, task_id in enumerate(task_ids, 1):
         try:
-            print(f"[{idx}/{len(task_ids)}] Running {task_id}...", end=" ", flush=True)
-            score = run_task(client=client, model=args.model, task_id=task_id, max_turns=args.max_turns, policy=effective_policy)
+            print(f"[{idx}/{len(task_ids)}] Running {task_id}...", flush=True)
+            score, steps = run_task(client=client, model=args.model, task_id=task_id, max_turns=args.max_turns, policy=effective_policy)
             results[task_id] = round(score, 4)
-            print(f"✓ Score: {results[task_id]}")
+            step_counts[task_id] = steps
+            print(f"✓ Completed: Score={results[task_id]}, Steps={steps}\n", flush=True)
         except Exception as e:
-            print(f"\n    ❌ Error in {task_id}: {type(e).__name__}: {e}")
+            print(f"❌ Error in {task_id}: {type(e).__name__}: {e}", flush=True)
             results[task_id] = 0.0
+            step_counts[task_id] = 0
 
     aggregate = round(mean(results.values()), 4)
-    print("\n" + "="*60)
-    print(f"📊 Final Results (Policy: {effective_policy})")
-    print("="*60)
-    print(json.dumps({"model": args.model, "policy": effective_policy, "scores": results, "average": aggregate}, indent=2))
+    print("\n" + "="*60, flush=True)
+    print(f"📊 Final Results (Policy: {effective_policy})", flush=True)
+    print("="*60, flush=True)
+    output = {"model": args.model, "policy": effective_policy, "scores": results, "steps": step_counts, "average": aggregate}
+    print(json.dumps(output, indent=2), flush=True)
 
 
 if __name__ == "__main__":
