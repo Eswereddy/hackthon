@@ -168,7 +168,7 @@ def main() -> None:
         "--policy",
         choices=["openai", "heuristic"],
         default="heuristic",
-        help="Inference policy: openai uses HF_TOKEN and API calls, heuristic is fully deterministic local baseline.",
+        help="Inference policy: openai uses API_KEY/API_BASE_URL (validator proxy) or HF_TOKEN, heuristic is fully deterministic local baseline.",
     )
     args = parser.parse_args()
 
@@ -176,13 +176,26 @@ def main() -> None:
     effective_policy = args.policy
     
     if args.policy == "openai":
-        token = os.environ.get("HF_TOKEN")
-        if not token:
-            print("⚠️ HF_TOKEN not found. Falling back to heuristic policy (deterministic baseline).", flush=True)
+        # Try to use validator-provided API_BASE_URL and API_KEY first
+        api_base = os.environ.get("API_BASE_URL")
+        api_key = os.environ.get("API_KEY")
+        
+        # Fall back to HF_TOKEN if validator variables not provided
+        if not api_key:
+            api_key = os.environ.get("HF_TOKEN")
+        
+        if not api_key:
+            print("⚠️ API_KEY/HF_TOKEN not found. Falling back to heuristic policy (deterministic baseline).", flush=True)
             effective_policy = "heuristic"
         else:
             try:
-                client = OpenAI(api_key=token, timeout=30.0)
+                # Initialize with API_BASE_URL if provided, otherwise use default OpenAI endpoint
+                init_kwargs = {"api_key": api_key, "timeout": 30.0}
+                if api_base:
+                    init_kwargs["base_url"] = api_base
+                    print(f"✓ Using API_BASE_URL: {api_base}", flush=True)
+                
+                client = OpenAI(**init_kwargs)
                 print("✓ OpenAI client initialized successfully", flush=True)
             except Exception as e:
                 print(f"⚠️ Failed to initialize OpenAI client: {type(e).__name__}: {e}", flush=True)
