@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
+import traceback
 from statistics import mean
 from typing import Dict, Optional
 
@@ -99,10 +101,11 @@ def run_task(client: Optional[OpenAI], model: str, task_id: str, max_turns: int,
             if client is None:
                 raise RuntimeError("OpenAI client not initialized for policy=openai")
             try:
-                # Call OpenAI Chat Completions API (v2.x compatible)
+                # Call OpenAI Chat Completions API (v2.x compatible) with timeout
                 completion = client.chat.completions.create(
                     model=model,
                     temperature=0,
+                    timeout=30.0,
                     messages=[
                         {
                             "role": "user",
@@ -125,7 +128,7 @@ def run_task(client: Optional[OpenAI], model: str, task_id: str, max_turns: int,
                 print(f"⚠️ API Response Error: {e}")
                 action = Action(action_type=ActionType.NOOP, payload={})
             except Exception as e:
-                print(f"⚠️ OpenAI API Error: {type(e).__name__}: {e}")
+                print(f"⚠️ OpenAI API Error ({type(e).__name__}): {e}. Using NOOP action.")
                 action = Action(action_type=ActionType.NOOP, payload={})
 
         obs, _, done, info = env.step(action)
@@ -137,45 +140,65 @@ def run_task(client: Optional[OpenAI], model: str, task_id: str, max_turns: int,
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run reproducible baseline evaluation across all tasks.")
-    parser.add_argument("--model", default="gpt-4.1-mini", help="OpenAI model name")
+    parser.add_argument("--model", default="gpt-4-mini", help="OpenAI model name")
     parser.add_argument("--max-turns", type=int, default=10, help="Max interaction steps per task")
     parser.add_argument(
         "--policy",
         choices=["openai", "heuristic"],
-        default="openai",
+        default="heuristic",
         help="Inference policy: openai uses HF_TOKEN and API calls, heuristic is fully deterministic local baseline.",
     )
     args = parser.parse_args()
 
     client: Optional[OpenAI] = None
+    effective_policy = args.policy
+    
     if args.policy == "openai":
         token = os.environ.get("HF_TOKEN")
         if not token:
-            raise EnvironmentError("HF_TOKEN is required. Set it to your API key before running baseline inference.")
-        try:
-            client = OpenAI(api_key=token)
-        except Exception as e:
-            print(f"Error initializing OpenAI client: {e}")
-            raise
+            print("⚠️ HF_TOKEN not found. Falling back to heuristic policy (deterministic baseline).")
+            effective_policy = "heuristic"
+        else:
+            try:
+                client = OpenAI(api_key=token, timeout=30.0)
+                print("✓ OpenAI client initialized successfully")
+            except Exception as e:
+                print(f"⚠️ Failed to initialize OpenAI client: {type(e).__name__}: {e}")
+                print("Falling back to heuristic policy.")
+                effective_policy = "heuristic"
 
     task_ids = ["email_triage", "ticket_routing", "content_moderation"]
     results: Dict[str, float] = {}
 
-    for task_id in task_ids:
+    print(f"\n📋 Running evaluation with policy={effective_policy}, model={args.model}, max_turns={args.max_turns}")
+    print(f"📌 Tasks: {', '.join(task_ids)}\n")
+    
+    for idx, task_id in enumerate(task_ids, 1):
         try:
-            score = run_task(client=client, model=args.model, task_id=task_id, max_turns=args.max_turns, policy=args.policy)
+            print(f"[{idx}/{len(task_ids)}] Running {task_id}...", end=" ", flush=True)
+            score = run_task(client=client, model=args.model, task_id=task_id, max_turns=args.max_turns, policy=effective_policy)
             results[task_id] = round(score, 4)
+            print(f"✓ Score: {results[task_id]}")
         except Exception as e:
-            print(f"Error running task {task_id}: {e}")
+            print(f"\n    ❌ Error in {task_id}: {type(e).__name__}: {e}")
             results[task_id] = 0.0
 
     aggregate = round(mean(results.values()), 4)
-    print(json.dumps({"model": args.model, "policy": args.policy, "scores": results, "average": aggregate}, indent=2))
+    print("\n" + "="*60)
+    print(f"📊 Final Results (Policy: {effective_policy})")
+    print("="*60)
+    print(json.dumps({"model": args.model, "policy": effective_policy, "scores": results, "average": aggregate}, indent=2))
 
 
 if __name__ == "__main__":
     try:
         main()
+    except KeyboardInterrupt:
+        print("\n⚠️ Interrupted by user")
+        sys.exit(1)
     except Exception as e:
-        print(f"Fatal error: {e}")
-        raise
+        print(f"\n❌ FATAL ERROR: {type(e).__name__}")
+        print(f"Details: {str(e)}")
+        print("\nFull traceback:")
+        traceback.print_exc()
+        sys.exit(1)
